@@ -1,0 +1,4 @@
+pymunk
+PyQt5
+numpy
+matplotlib

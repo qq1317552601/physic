@@ -1,0 +1,6 @@
+Git安装路径：C:\Program Files\Git\bin\git.exe
+
+使用此路径可以直接调用Git命令，例如：
+"C:\Program Files\Git\bin\git.exe" --version
+
+如果希望在命令行中直接使用git命令而不需要完整路径，可以将此路径添加到系统的PATH环境变量中。 
