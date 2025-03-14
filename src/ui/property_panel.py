@@ -36,7 +36,7 @@ class PropertyPanel(QDockWidget):
         type_group = QGroupBox("对象类型")
         type_layout = QVBoxLayout()
         self.type_combo = QComboBox()
-        self.type_combo.addItems(["长方体", "圆形", "三角形", "弹簧", "轻绳", "斜面"])
+        self.type_combo.addItems(["矩形", "圆形", "三角形", "弹簧", "轻绳", "斜面"])
         type_layout.addWidget(self.type_combo)
         type_group.setLayout(type_layout)
         layout.addWidget(type_group)
@@ -197,7 +197,7 @@ class PropertyPanel(QDockWidget):
         obj_type = self.type_combo.currentText()
         
         # 根据对象类型添加特定属性
-        if obj_type == "长方体":
+        if obj_type == "矩形":
             self.specific_layout.addRow("宽度 (m):", self.box_width)
             self.specific_layout.addRow("高度 (m):", self.box_height)
             self.box_width.show()
@@ -254,7 +254,7 @@ class PropertyPanel(QDockWidget):
         
         # 特定属性
         obj_type = self.type_combo.currentText()
-        if obj_type == "长方体":
+        if obj_type == "矩形":
             props["width"] = self.box_width.value()
             props["height"] = self.box_height.value()
         elif obj_type == "圆形":

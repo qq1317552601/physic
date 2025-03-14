@@ -93,7 +93,7 @@ class ToolboxPanel(QDockWidget):
         
         # 创建各种对象类型的单选按钮
         object_types = [
-            ("长方体", "box"),
+            ("矩形", "box"),
             ("圆形", "circle"),
             ("三角形", "triangle"),
             ("弹簧", "spring"),
@@ -180,7 +180,7 @@ class ToolboxPanel(QDockWidget):
         """
         # 获取对象类型
         index = self.object_type_group.id(button)
-        object_types = ["长方体", "圆形", "三角形", "弹簧", "轻绳", "斜面"]
+        object_types = ["矩形", "圆形", "三角形", "弹簧", "轻绳", "斜面"]
         obj_type = object_types[index]
         
         # 发送信号

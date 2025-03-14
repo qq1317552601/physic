@@ -45,13 +45,28 @@ class SimulationView(QWidget):
         self.last_mouse_pos = None
         self.selected_object = None
         self.draw_mode = False
-        self.current_object_type = "长方体"
+        self.current_object_type = "矩形"
+        
+        # 拖动创建物体相关变量
+        self.is_drawing_rect = False
+        self.is_drawing_circle = False
+        self.rect_start_pos = None
+        self.circle_center = None
         
         # 访问相机属性的代理方法（为了兼容性）
         self.origin = self.camera.origin
         self.scale = self.camera.scale
         self.current_unit = self.camera.current_unit
         self.current_factor = self.camera.current_factor
+    
+    def showEvent(self, event):
+        """处理视图显示事件，确保相机尺寸与实际视图尺寸一致"""
+        super().showEvent(event)
+        # 在视图首次显示时更新相机尺寸
+        self.camera.resize(self.width(), self.height())
+        # 更新代理属性
+        self.origin = self.camera.origin
+        self.scale = self.camera.scale
     
     def resizeEvent(self, event):
         """处理视图大小改变事件"""
@@ -98,15 +113,62 @@ class SimulationView(QWidget):
         # 获取物理坐标
         phys_x, phys_y = self.camera.from_screen_coords(event.x(), event.y())
         
-        # 如果是绘制模式，创建新对象
+        # 如果是绘制模式，开始创建新对象
         if self.draw_mode and event.button() == Qt.LeftButton:
-            self.create_object(phys_x, phys_y)
+            if self.current_object_type == "矩形":
+                # 记录矩形起始位置，但不立即创建
+                self.is_drawing_rect = True
+                self.rect_start_pos = (phys_x, phys_y)
+            elif self.current_object_type == "圆形":
+                # 记录圆心位置，但不立即创建
+                self.is_drawing_circle = True
+                self.circle_center = (phys_x, phys_y)
+            else:
+                # 其他对象仍然使用单击创建
+                self.create_object(phys_x, phys_y)
         else:
             # 否则，选择对象
             self.selected_object = self.simulator.get_object_at(phys_x, phys_y)
     
     def mouseReleaseEvent(self, event):
         """处理鼠标释放事件"""
+        # 如果正在绘制矩形并释放左键，完成矩形创建
+        if self.is_drawing_rect and event.button() == Qt.LeftButton and self.rect_start_pos:
+            # 获取当前物理坐标作为矩形终点
+            phys_x, phys_y = self.camera.from_screen_coords(event.x(), event.y())
+            
+            # 计算矩形的中心点、宽度和高度
+            center_x = (self.rect_start_pos[0] + phys_x) / 2
+            center_y = (self.rect_start_pos[1] + phys_y) / 2
+            width = abs(phys_x - self.rect_start_pos[0])
+            height = abs(phys_y - self.rect_start_pos[1])
+            
+            # 创建矩形（如果宽度和高度都大于0）
+            if width > 0 and height > 0:
+                self.add_box(position=(center_x, center_y), width=width, height=height)
+            
+            # 重置绘制状态
+            self.is_drawing_rect = False
+            self.rect_start_pos = None
+        
+        # 如果正在绘制圆形并释放左键，完成圆形创建
+        elif self.is_drawing_circle and event.button() == Qt.LeftButton and self.circle_center:
+            # 获取当前物理坐标
+            phys_x, phys_y = self.camera.from_screen_coords(event.x(), event.y())
+            
+            # 计算半径（圆心到当前点的距离）
+            dx = phys_x - self.circle_center[0]
+            dy = phys_y - self.circle_center[1]
+            radius = math.sqrt(dx*dx + dy*dy)
+            
+            # 创建圆形（如果半径大于0）
+            if radius > 0:
+                self.add_circle(position=self.circle_center, radius=radius)
+            
+            # 重置绘制状态
+            self.is_drawing_circle = False
+            self.circle_center = None
+        
         # 更新鼠标状态
         self.mouse_pressed = False
         self.selected_object = None
@@ -119,8 +181,12 @@ class SimulationView(QWidget):
         # 发送鼠标位置信号
         self.mousePositionChanged.emit(phys_x, phys_y)
         
+        # 如果正在绘制物体，更新视图以显示预览
+        if (self.is_drawing_rect and self.rect_start_pos) or (self.is_drawing_circle and self.circle_center):
+            self.update()  # 触发重绘以显示预览
+        
         # 如果鼠标按下且不在绘制模式，平移视图或移动选中对象
-        if self.mouse_pressed and self.last_mouse_pos:
+        if self.mouse_pressed and self.last_mouse_pos and not (self.is_drawing_rect or self.is_drawing_circle):
             dx = event.x() - self.last_mouse_pos.x()
             dy = event.y() - self.last_mouse_pos.y()
             
@@ -135,8 +201,8 @@ class SimulationView(QWidget):
                 
                 # 重绘视图
                 self.update()
-            elif event.buttons() & Qt.RightButton:
-                # 平移视图
+            elif event.buttons() & Qt.MiddleButton:
+                # 平移视图（使用鼠标中键）
                 self.camera.pan(dx, dy)
                 
                 # 更新代理属性
@@ -161,6 +227,50 @@ class SimulationView(QWidget):
         
         # 绘制所有物理对象
         self.renderer.draw_objects(painter, self.simulator.objects)
+        
+        # 如果正在绘制矩形，绘制预览
+        if self.is_drawing_rect and self.rect_start_pos and self.last_mouse_pos:
+            # 获取当前鼠标位置的物理坐标
+            phys_x, phys_y = self.camera.from_screen_coords(self.last_mouse_pos.x(), self.last_mouse_pos.y())
+            
+            # 计算矩形的屏幕坐标
+            start_x, start_y = self.camera.to_screen_coords(self.rect_start_pos[0], self.rect_start_pos[1])
+            end_x, end_y = self.camera.to_screen_coords(phys_x, phys_y)
+            
+            # 计算矩形的左上角和尺寸
+            rect_x = min(start_x, end_x)
+            rect_y = min(start_y, end_y)
+            rect_width = abs(end_x - start_x)
+            rect_height = abs(end_y - start_y)
+            
+            # 设置半透明的填充颜色和边框
+            painter.setPen(QPen(QColor(0, 0, 0), 2, Qt.DashLine))
+            painter.setBrush(QBrush(QColor(200, 200, 255, 128)))  # 半透明的浅蓝色
+            
+            # 绘制预览矩形
+            painter.drawRect(int(rect_x), int(rect_y), int(rect_width), int(rect_height))
+        
+        # 如果正在绘制圆形，绘制预览
+        elif self.is_drawing_circle and self.circle_center and self.last_mouse_pos:
+            # 获取当前鼠标位置的物理坐标
+            phys_x, phys_y = self.camera.from_screen_coords(self.last_mouse_pos.x(), self.last_mouse_pos.y())
+            
+            # 计算半径（物理单位）
+            dx = phys_x - self.circle_center[0]
+            dy = phys_y - self.circle_center[1]
+            radius = math.sqrt(dx*dx + dy*dy)
+            
+            # 转换为屏幕坐标
+            center_x, center_y = self.camera.to_screen_coords(self.circle_center[0], self.circle_center[1])
+            screen_radius = radius * self.camera.scale
+            
+            # 设置半透明的填充颜色和边框
+            painter.setPen(QPen(QColor(0, 0, 0), 2, Qt.DashLine))
+            painter.setBrush(QBrush(QColor(200, 200, 255, 128)))  # 半透明的浅蓝色
+            
+            # 绘制预览圆形
+            painter.drawEllipse(int(center_x - screen_radius), int(center_y - screen_radius), 
+                               int(screen_radius * 2), int(screen_radius * 2))
     
     def add_box(self, position=(0, 0), width=1.0, height=1.0, mass=1.0, velocity=(0, 0), color=None):
         """
@@ -349,7 +459,7 @@ class SimulationView(QWidget):
             创建的对象
         """
         # 根据当前类型创建对象
-        if self.current_object_type == "长方体":
+        if self.current_object_type == "矩形":
             return self.add_box(position=(x, y))
         elif self.current_object_type == "圆形":
             return self.add_circle(position=(x, y))

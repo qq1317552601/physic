@@ -167,15 +167,6 @@ class Renderer:
             Qt.AlignCenter,
             "y"
         )
-        
-        # 单位信息
-        unit_text = f"单位: 1格 = 1{self.view.current_unit}"
-        painter.drawText(
-            10, view_height - 20,
-            200, 20,
-            Qt.AlignLeft | Qt.AlignBottom,
-            unit_text
-        )
     
     def _calculate_nice_tick_interval(self, physical_range, target_count=10):
         """
@@ -285,8 +276,8 @@ class Renderer:
         
         # 对于接近整数的值，不显示小数
         if abs(scaled_value - round(scaled_value)) < 1e-10:
-            return f"{int(scaled_value)}"
+            return f"{int(scaled_value)}{unit}"
         
         # 对于小数，限制小数位数
         decimal_places = max(0, min(2, -math.floor(math.log10(abs(scaled_value - int(scaled_value))))))
-        return f"{scaled_value:.{decimal_places}f}"
+        return f"{scaled_value:.{decimal_places}f}{unit}"
