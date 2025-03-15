@@ -1,5 +1,5 @@
 import math
-from PyQt5.QtWidgets import QWidget
+from PyQt5.QtWidgets import QWidget, QMenu, QAction, QColorDialog, QInputDialog, QMessageBox
 from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF
 from PyQt5.QtCore import Qt, QPoint, QRect, QPointF, pyqtSignal
 
@@ -10,6 +10,10 @@ from physics.simulator import PhysicsSimulator
 # 导入渲染和相机模块
 from rendering.camera import Camera
 from rendering.renderer import Renderer
+
+# 导入新的上下文菜单和对象工厂类
+from .context_menu import ObjectContextMenu
+from .object_factory import ObjectFactory
 
 class SimulationView(QWidget):
     """
@@ -37,6 +41,12 @@ class SimulationView(QWidget):
         # 初始化物理模拟器
         self.simulator = PhysicsSimulator()
         
+        # 初始化上下文菜单管理器
+        self.context_menu = ObjectContextMenu(self)
+        
+        # 初始化对象工厂
+        self.object_factory = ObjectFactory(self.simulator)
+        
         # 网格和坐标系参数
         self.show_grid = True
         
@@ -44,8 +54,10 @@ class SimulationView(QWidget):
         self.mouse_pressed = False
         self.last_mouse_pos = None
         self.selected_object = None
+        self.hover_object = None  # 鼠标悬停的物体
         self.draw_mode = False
-        self.current_object_type = "矩形"
+        self.select_mode = True  # 默认为选择模式
+        self.current_object_type = "选择"  # 默认为选择工具
         
         # 拖动创建物体相关变量
         self.is_drawing_rect = False
@@ -113,8 +125,23 @@ class SimulationView(QWidget):
         # 获取物理坐标
         phys_x, phys_y = self.camera.from_screen_coords(event.x(), event.y())
         
-        # 如果是绘制模式，开始创建新对象
-        if self.draw_mode and event.button() == Qt.LeftButton:
+        # 根据当前模式处理鼠标事件
+        if self.select_mode and event.button() == Qt.LeftButton:
+            # 选择模式：选中或取消选中物体
+            self.selected_object = self.simulator.get_object_at(phys_x, phys_y)
+        elif self.select_mode and event.button() == Qt.RightButton:
+            # 右键菜单：检查点击位置是否有物体
+            obj = self.simulator.get_object_at(phys_x, phys_y)
+            if obj:
+                # 如果点击的物体与当前选中的物体不同，则先选中它
+                if obj != self.selected_object:
+                    self.selected_object = obj
+                    self.update()  # 更新视图
+                
+                # 显示右键菜单
+                self.context_menu.show_context_menu(event.globalPos(), obj, self.update)
+        elif self.draw_mode and event.button() == Qt.LeftButton:
+            # 绘制模式：开始创建物体
             if self.current_object_type == "矩形":
                 # 记录矩形起始位置，但不立即创建
                 self.is_drawing_rect = True
@@ -127,11 +154,18 @@ class SimulationView(QWidget):
                 # 其他对象仍然使用单击创建
                 self.create_object(phys_x, phys_y)
         else:
-            # 否则，选择对象
-            self.selected_object = self.simulator.get_object_at(phys_x, phys_y)
+            # 其他按钮或模式的处理
+            pass
     
     def mouseReleaseEvent(self, event):
         """处理鼠标释放事件"""
+        # 如果是选择模式，保持选中状态
+        if self.select_mode:
+            # 不重置选中对象，只更新鼠标状态
+            self.mouse_pressed = False
+            self.update()  # 更新视图
+            return
+            
         # 如果正在绘制矩形并释放左键，完成矩形创建
         if self.is_drawing_rect and event.button() == Qt.LeftButton and self.rect_start_pos:
             # 获取当前物理坐标作为矩形终点
@@ -145,11 +179,14 @@ class SimulationView(QWidget):
             
             # 创建矩形（如果宽度和高度都大于0）
             if width > 0 and height > 0:
-                self.add_box(position=(center_x, center_y), width=width, height=height)
+                self.object_factory.add_box(position=(center_x, center_y), width=width, height=height)
             
             # 重置绘制状态
             self.is_drawing_rect = False
             self.rect_start_pos = None
+            
+            # 强制更新视图以确保使用正确的边框样式
+            self.update()
         
         # 如果正在绘制圆形并释放左键，完成圆形创建
         elif self.is_drawing_circle and event.button() == Qt.LeftButton and self.circle_center:
@@ -163,15 +200,17 @@ class SimulationView(QWidget):
             
             # 创建圆形（如果半径大于0）
             if radius > 0:
-                self.add_circle(position=self.circle_center, radius=radius)
+                self.object_factory.add_circle(position=self.circle_center, radius=radius)
             
             # 重置绘制状态
             self.is_drawing_circle = False
             self.circle_center = None
+            
+            # 强制更新视图以确保使用正确的边框样式
+            self.update()
         
         # 更新鼠标状态
         self.mouse_pressed = False
-        self.selected_object = None
     
     def mouseMoveEvent(self, event):
         """处理鼠标移动事件"""
@@ -180,6 +219,18 @@ class SimulationView(QWidget):
         
         # 发送鼠标位置信号
         self.mousePositionChanged.emit(phys_x, phys_y)
+        
+        # 在选择模式下，始终检测鼠标悬停在哪个物体上
+        if self.select_mode:
+            obj = self.simulator.get_object_at(phys_x, phys_y)
+            if obj != self.hover_object:  # 只有当悬停的物体发生变化时才更新
+                self.hover_object = obj
+                self.update()  # 重绘视图以显示悬停效果
+        else:
+            # 非选择模式下清除悬停对象
+            if self.hover_object is not None:
+                self.hover_object = None
+                self.update()
         
         # 如果正在绘制物体，更新视图以显示预览
         if (self.is_drawing_rect and self.rect_start_pos) or (self.is_drawing_circle and self.circle_center):
@@ -286,10 +337,7 @@ class SimulationView(QWidget):
         返回:
             创建的长方体对象
         """
-        box = Box(position, (width, height), mass, velocity)
-        if color:
-            box.color = color
-        self.simulator.add_object(box)
+        box = self.object_factory.add_box(position, width, height, mass, velocity, color)
         self.update()
         return box
     
@@ -307,10 +355,7 @@ class SimulationView(QWidget):
         返回:
             创建的圆形对象
         """
-        circle = Circle(position, radius, mass, velocity)
-        if color:
-            circle.color = color
-        self.simulator.add_object(circle)
+        circle = self.object_factory.add_circle(position, radius, mass, velocity, color)
         self.update()
         return circle
     
@@ -328,20 +373,7 @@ class SimulationView(QWidget):
         返回:
             创建的三角形对象
         """
-        # 计算三角形顶点
-        width, height = size
-        half_width = width / 2
-        
-        vertices = [
-            (position[0] - half_width, position[1]),
-            (position[0] + half_width, position[1]),
-            (position[0], position[1] + height)
-        ]
-        
-        triangle = Triangle(position, vertices, mass, velocity)
-        if color:
-            triangle.color = color
-        self.simulator.add_object(triangle)
+        triangle = self.object_factory.add_triangle(position, size, mass, velocity, color)
         self.update()
         return triangle
     
@@ -359,10 +391,7 @@ class SimulationView(QWidget):
         返回:
             创建的弹簧对象
         """
-        spring = Spring(start_pos, end_pos, k, None, width)
-        if color:
-            spring.color = color
-        self.simulator.add_object(spring)
+        spring = self.object_factory.add_spring(start_pos, end_pos, k, width, color)
         self.update()
         return spring
     
@@ -380,10 +409,7 @@ class SimulationView(QWidget):
         返回:
             创建的轻绳对象
         """
-        rope = Rope(start_pos, end_pos, segments, width)
-        if color:
-            rope.color = color
-        self.simulator.add_object(rope)
+        rope = self.object_factory.add_rope(start_pos, end_pos, segments, width, color)
         self.update()
         return rope
     
@@ -401,10 +427,7 @@ class SimulationView(QWidget):
         返回:
             创建的斜面对象
         """
-        ramp = Ramp(position, width, height, None, friction)
-        if color:
-            ramp.color = color
-        self.simulator.add_object(ramp)
+        ramp = self.object_factory.add_ramp(position, width, height, friction, color)
         self.update()
         return ramp
     
@@ -421,6 +444,20 @@ class SimulationView(QWidget):
             object_type: 对象类型名称
         """
         self.current_object_type = object_type
+        
+        # 根据选择的工具切换模式
+        if object_type == "选择":
+            self.select_mode = True
+            self.draw_mode = False
+        else:
+            self.select_mode = False
+            self.draw_mode = True  # 非选择模式则为绘制模式
+            
+        # 切换模式时清除悬停物体
+        self.hover_object = None
+        
+        # 更新视图以反映变化
+        self.update()
     
     def toggle_grid(self, show):
         """
@@ -458,21 +495,10 @@ class SimulationView(QWidget):
         返回:
             创建的对象
         """
-        # 根据当前类型创建对象
-        if self.current_object_type == "矩形":
-            return self.add_box(position=(x, y))
-        elif self.current_object_type == "圆形":
-            return self.add_circle(position=(x, y))
-        elif self.current_object_type == "三角形":
-            return self.add_triangle(position=(x, y))
-        elif self.current_object_type == "弹簧":
-            return self.add_spring(start_pos=(x, y), end_pos=(x + 1, y))
-        elif self.current_object_type == "轻绳":
-            return self.add_rope(start_pos=(x, y), end_pos=(x + 1, y))
-        elif self.current_object_type == "斜面":
-            return self.add_ramp(position=(x, y))
-        
-        return None
+        obj = self.object_factory.create_object(self.current_object_type, x, y)
+        if obj:
+            self.update()  # 重绘视图
+        return obj
     
     def keyPressEvent(self, event):
         """处理键盘事件"""
@@ -514,6 +540,11 @@ class SimulationView(QWidget):
             running: 是否运行模拟
         """
         if running:
+            # 开始模拟前，确保所有物体的加速度重置为初始状态
+            # 这样重力会在下一次更新中正确应用
+            for obj in self.simulator.objects:
+                if hasattr(obj, 'mass') and obj.mass > 0:
+                    obj.acceleration = (0, 0)
             self.simulator.start()
         else:
             self.simulator.stop()
@@ -521,7 +552,15 @@ class SimulationView(QWidget):
     def reset_simulation(self):
         """重置模拟"""
         self.simulator.reset()
-        # 可以在这里添加重置对象到初始状态的代码
+        
+        # 重置所有物体的速度和加速度
+        for obj in self.simulator.objects:
+            if hasattr(obj, 'velocity'):
+                obj.velocity = (0, 0)
+            if hasattr(obj, 'acceleration'):
+                obj.acceleration = (0, 0)
+                
+        # 更新视图
         self.update()
     
     def set_time_scale(self, scale):
@@ -532,3 +571,23 @@ class SimulationView(QWidget):
             scale: 时间缩放系数
         """
         self.simulator.time_scale = scale
+    
+    def toggle_draw_mode(self, state):
+        """
+        切换绘制模式
+        
+        参数:
+            state: 是否启用绘制模式
+        """
+        self.draw_mode = state
+        
+        # 如果启用绘制模式，则禁用选择模式并清除悬停物体
+        if state:
+            self.select_mode = False
+            self.hover_object = None
+        else:
+            # 如果当前工具是"选择"，则启用选择模式
+            self.select_mode = (self.current_object_type == "选择")
+        
+        # 更新视图以反映模式变化
+        self.update()

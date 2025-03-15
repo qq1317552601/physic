@@ -117,6 +117,7 @@ class MainWindow(QMainWindow):
         self.toolbox_panel.gridToggled.connect(self.toggle_grid)
         self.toolbox_panel.viewReset.connect(self.reset_view)
         self.toolbox_panel.timeScaleChanged.connect(self.set_time_scale)
+        self.toolbox_panel.gravityChanged.connect(self.set_gravity)
         
         # 清除对象按钮连接
         self.toolbox_panel.clear_objects_button.clicked.connect(self.clear_objects)
@@ -130,7 +131,9 @@ class MainWindow(QMainWindow):
         # 加载物理设置
         gravity = config.get("physics", "gravity")
         if gravity and len(gravity) == 2:
-            self.simulation_view.simulator.gravity = (gravity[0], gravity[1])
+            self.simulation_view.simulator.gravity = (0.0, gravity[1])  # X方向固定为0
+            # 更新工具箱面板中的重力控件
+            self.toolbox_panel.gravity_y.setValue(gravity[1])
         
         self.simulation_view.simulator.time_scale = config.get("physics", "time_scale")
         
@@ -320,6 +323,25 @@ class MainWindow(QMainWindow):
         # 保存配置
         self.save_config()
         event.accept()
+
+    def set_gravity(self, gx, gy):
+        """
+        设置重力
+        
+        参数:
+            gx, gy: 重力加速度分量
+        """
+        self.simulation_view.simulator.gravity = (gx, gy)
+        
+        # 重置所有物体的加速度，确保新的重力立即生效
+        for obj in self.simulation_view.simulator.objects:
+            if hasattr(obj, 'mass') and obj.mass > 0:
+                # 只保留物体自身的加速度，不包括重力加速度
+                # 下一次更新时会重新应用重力
+                obj.acceleration = (0, 0)
+        
+        # 更新配置
+        config.set("physics", "gravity", [gx, gy])
 
 
 if __name__ == "__main__":

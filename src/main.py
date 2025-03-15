@@ -22,6 +22,9 @@ project_root = os.path.dirname(os.path.abspath(__file__))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# 导入错误处理器
+from utils.error_handler import error_handler
+
 # 导入主窗口
 from ui.main_window import MainWindow
 
@@ -46,34 +49,44 @@ def setup_logging():
 
 def main():
     """应用程序主入口点"""
-    # 设置日志
-    logger = setup_logging()
-    logger.info("启动物理运动学可视化软件")
-    
-    # 创建QApplication实例
-    app = QApplication(sys.argv)
-    app.setApplicationName("物理运动学可视化软件")
-    app.setOrganizationName("PhysicsSimulator")
-    
-    # 设置应用程序图标
-    # app.setWindowIcon(QIcon(os.path.join(project_root, 'resources', 'icon.png')))
-    
-    # 显示启动画面
-    # splash_pix = QPixmap(os.path.join(project_root, 'resources', 'splash.png'))
-    # splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
-    # splash.show()
-    # app.processEvents()
-    
-    # 延迟创建主窗口，以显示启动画面
-    # QTimer.singleShot(1000, lambda: initialize_main_window(app, splash, logger))
-    
-    # 直接创建主窗口（如果没有启动画面）
-    window = MainWindow()
-    window.show()
-    logger.info("主窗口已显示")
-    
-    # 进入应用程序主循环
-    sys.exit(app.exec_())
+    try:
+        # 设置日志
+        logger = setup_logging()
+        logger.info("启动物理运动学可视化软件")
+        
+        # 安装全局异常处理器
+        error_handler.logger = logger
+        error_handler.install_global_handler()
+        
+        # 创建QApplication实例
+        app = QApplication(sys.argv)
+        app.setApplicationName("物理运动学可视化软件")
+        app.setOrganizationName("PhysicsSimulator")
+        
+        # 设置应用程序图标
+        # app.setWindowIcon(QIcon(os.path.join(project_root, 'resources', 'icon.png')))
+        
+        # 显示启动画面
+        # splash_pix = QPixmap(os.path.join(project_root, 'resources', 'splash.png'))
+        # splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
+        # splash.show()
+        # app.processEvents()
+        
+        # 延迟创建主窗口，以显示启动画面
+        # QTimer.singleShot(1000, lambda: initialize_main_window(app, splash, logger))
+        
+        # 直接创建主窗口（如果没有启动画面）
+        window = MainWindow()
+        window.show()
+        logger.info("主窗口已显示")
+        
+        # 进入应用程序主循环
+        sys.exit(app.exec_())
+    except Exception as e:
+        # 记录启动过程中的未处理异常
+        error_handler.log_error("启动应用程序时出错", exc_info=True)
+        error_handler.show_error_dialog("启动错误", f"启动应用程序时出错: {str(e)}")
+        sys.exit(1)
 
 def initialize_main_window(app, splash, logger):
     """初始化并显示主窗口"""
@@ -87,7 +100,9 @@ def initialize_main_window(app, splash, logger):
         
         logger.info("主窗口已显示")
     except Exception as e:
-        logger.error(f"初始化主窗口时出错: {str(e)}", exc_info=True)
+        # 使用错误处理器处理异常
+        error_handler.log_error(f"初始化主窗口时出错: {str(e)}")
+        error_handler.show_error_dialog("初始化错误", f"初始化主窗口时出错: {str(e)}")
         sys.exit(1)
 
 if __name__ == "__main__":

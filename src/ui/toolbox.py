@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QGroupBox, 
                              QPushButton, QCheckBox, QButtonGroup, QRadioButton,
-                             QSlider, QLabel, QFormLayout, QHBoxLayout)
+                             QSlider, QLabel, QFormLayout, QHBoxLayout, QDoubleSpinBox)
 from PyQt5.QtCore import Qt, pyqtSignal
 
 class ToolboxPanel(QDockWidget):
@@ -16,6 +16,7 @@ class ToolboxPanel(QDockWidget):
     gridToggled = pyqtSignal(bool)
     viewReset = pyqtSignal()
     timeScaleChanged = pyqtSignal(float)
+    gravityChanged = pyqtSignal(float, float)  # 新增重力变化信号
     
     def __init__(self, parent=None):
         """
@@ -57,6 +58,17 @@ class ToolboxPanel(QDockWidget):
         time_layout.addRow(self.time_scale_label, self.time_scale_slider)
         sim_layout.addLayout(time_layout)
         
+        # 添加重力控制
+        gravity_layout = QFormLayout()
+        self.gravity_y = QDoubleSpinBox()
+        self.gravity_y.setRange(-100, 100)
+        self.gravity_y.setValue(-9.8)
+        self.gravity_y.setSingleStep(0.1)
+        self.gravity_y.setDecimals(2)
+        gravity_layout.addRow("重力 (m/s²):", self.gravity_y)
+        
+        sim_layout.addLayout(gravity_layout)
+        
         simulation_group.setLayout(sim_layout)
         layout.addWidget(simulation_group)
         
@@ -93,6 +105,7 @@ class ToolboxPanel(QDockWidget):
         
         # 创建各种对象类型的单选按钮
         object_types = [
+            ("选择", "select"),
             ("矩形", "box"),
             ("圆形", "circle"),
             ("三角形", "triangle"),
@@ -121,6 +134,7 @@ class ToolboxPanel(QDockWidget):
         self.reset_view_button.clicked.connect(self.reset_view)
         self.object_type_group.buttonClicked.connect(self.set_object_type)
         self.time_scale_slider.valueChanged.connect(self.update_time_scale)
+        self.gravity_y.valueChanged.connect(self.update_gravity)
     
     def toggle_simulation(self, checked):
         """
@@ -180,7 +194,7 @@ class ToolboxPanel(QDockWidget):
         """
         # 获取对象类型
         index = self.object_type_group.id(button)
-        object_types = ["矩形", "圆形", "三角形", "弹簧", "轻绳", "斜面"]
+        object_types = ["选择", "矩形", "圆形", "三角形", "弹簧", "轻绳", "斜面"]
         obj_type = object_types[index]
         
         # 发送信号
@@ -201,3 +215,8 @@ class ToolboxPanel(QDockWidget):
         
         # 发送信号
         self.timeScaleChanged.emit(scale)
+    
+    def update_gravity(self):
+        """更新重力设置"""
+        # 发送重力变化信号，X方向固定为0
+        self.gravityChanged.emit(0.0, self.gravity_y.value())
