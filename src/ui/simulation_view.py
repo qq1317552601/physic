@@ -1,6 +1,6 @@
 import math
 from PyQt5.QtWidgets import QWidget, QMenu, QAction, QColorDialog, QInputDialog, QMessageBox
-from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF
+from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPolygonF, QKeySequence
 from PyQt5.QtCore import Qt, QPoint, QRect, QPointF, pyqtSignal
 
 # 导入物理对象
@@ -23,6 +23,7 @@ class SimulationView(QWidget):
     # 定义信号
     mousePositionChanged = pyqtSignal(float, float)
     scaleChanged = pyqtSignal(float, str)
+    objectSelected = pyqtSignal(object)  # 新增选中物体信号
     
     def __init__(self):
         """初始化模拟视图"""
@@ -128,7 +129,17 @@ class SimulationView(QWidget):
         # 根据当前模式处理鼠标事件
         if self.select_mode and event.button() == Qt.LeftButton:
             # 选择模式：选中或取消选中物体
+            prev_selected = self.selected_object
             self.selected_object = self.simulator.get_object_at(phys_x, phys_y)
+            
+            # 只有在选中物体变化时才发出信号
+            if self.selected_object != prev_selected:
+                # 如果选中了新物体，发出信号通知
+                if self.selected_object:
+                    self.objectSelected.emit(self.selected_object)
+                # 如果取消选中，发出信号通知（传递None）
+                elif prev_selected:
+                    self.objectSelected.emit(None)
         elif self.select_mode and event.button() == Qt.RightButton:
             # 右键菜单：检查点击位置是否有物体
             obj = self.simulator.get_object_at(phys_x, phys_y)
@@ -136,6 +147,7 @@ class SimulationView(QWidget):
                 # 如果点击的物体与当前选中的物体不同，则先选中它
                 if obj != self.selected_object:
                     self.selected_object = obj
+                    self.objectSelected.emit(obj)
                     self.update()  # 更新视图
                 
                 # 显示右键菜单
@@ -143,15 +155,15 @@ class SimulationView(QWidget):
         elif self.draw_mode and event.button() == Qt.LeftButton:
             # 绘制模式：开始创建物体
             if self.current_object_type == "矩形":
-                # 记录矩形起始位置，但不立即创建
+                # 记录矩形起始位置（吸附到网格），但不立即创建
                 self.is_drawing_rect = True
-                self.rect_start_pos = (phys_x, phys_y)
+                self.rect_start_pos = self.snap_to_grid(phys_x, phys_y)
             elif self.current_object_type == "圆形":
-                # 记录圆心位置，但不立即创建
+                # 记录圆心位置（吸附到网格），但不立即创建
                 self.is_drawing_circle = True
-                self.circle_center = (phys_x, phys_y)
+                self.circle_center = self.snap_to_grid(phys_x, phys_y)
             else:
-                # 其他对象仍然使用单击创建
+                # 其他对象仍然使用单击创建（已经通过create_object方法实现了吸附）
                 self.create_object(phys_x, phys_y)
         else:
             # 其他按钮或模式的处理
@@ -161,6 +173,31 @@ class SimulationView(QWidget):
         """处理鼠标释放事件"""
         # 如果是选择模式，保持选中状态
         if self.select_mode:
+            # 如果拖动了物体，创建移动命令
+            if self.selected_object and hasattr(self, 'drag_start_position'):
+                # 获取结束位置
+                end_position = self.selected_object.position
+                
+                # 如果位置发生了变化，创建命令
+                if self.drag_start_position != end_position:
+                    # 获取主窗口引用
+                    main_window = self.parent()
+                    while main_window and not hasattr(main_window, 'command_history'):
+                        main_window = main_window.parent()
+                    
+                    # 如果找到主窗口，创建移动命令
+                    if main_window and hasattr(main_window, 'command_history'):
+                        from utils.command_history import MoveObjectCommand
+                        command = MoveObjectCommand(
+                            self.selected_object, 
+                            self.drag_start_position, 
+                            end_position
+                        )
+                        main_window.command_history.execute_command(command)
+                        
+                # 清除拖动开始位置
+                delattr(self, 'drag_start_position')
+            
             # 不重置选中对象，只更新鼠标状态
             self.mouse_pressed = False
             self.update()  # 更新视图
@@ -168,18 +205,21 @@ class SimulationView(QWidget):
             
         # 如果正在绘制矩形并释放左键，完成矩形创建
         if self.is_drawing_rect and event.button() == Qt.LeftButton and self.rect_start_pos:
-            # 获取当前物理坐标作为矩形终点
+            # 获取当前物理坐标作为矩形终点，并吸附到网格
             phys_x, phys_y = self.camera.from_screen_coords(event.x(), event.y())
+            end_pos = self.snap_to_grid(phys_x, phys_y)
             
             # 计算矩形的中心点、宽度和高度
-            center_x = (self.rect_start_pos[0] + phys_x) / 2
-            center_y = (self.rect_start_pos[1] + phys_y) / 2
-            width = abs(phys_x - self.rect_start_pos[0])
-            height = abs(phys_y - self.rect_start_pos[1])
+            center_x = (self.rect_start_pos[0] + end_pos[0]) / 2
+            center_y = (self.rect_start_pos[1] + end_pos[1]) / 2
+            width = abs(end_pos[0] - self.rect_start_pos[0])
+            height = abs(end_pos[1] - self.rect_start_pos[1])
             
             # 创建矩形（如果宽度和高度都大于0）
             if width > 0 and height > 0:
-                self.object_factory.add_box(position=(center_x, center_y), width=width, height=height)
+                # 吸附中心点到网格
+                center_pos = self.snap_to_grid(center_x, center_y)
+                self.object_factory.add_box(position=center_pos, width=width, height=height)
             
             # 重置绘制状态
             self.is_drawing_rect = False
@@ -190,12 +230,13 @@ class SimulationView(QWidget):
         
         # 如果正在绘制圆形并释放左键，完成圆形创建
         elif self.is_drawing_circle and event.button() == Qt.LeftButton and self.circle_center:
-            # 获取当前物理坐标
+            # 获取当前物理坐标，并吸附到网格
             phys_x, phys_y = self.camera.from_screen_coords(event.x(), event.y())
+            end_pos = self.snap_to_grid(phys_x, phys_y)
             
             # 计算半径（圆心到当前点的距离）
-            dx = phys_x - self.circle_center[0]
-            dy = phys_y - self.circle_center[1]
+            dx = end_pos[0] - self.circle_center[0]
+            dy = end_pos[1] - self.circle_center[1]
             radius = math.sqrt(dx*dx + dy*dy)
             
             # 创建圆形（如果半径大于0）
@@ -248,6 +289,11 @@ class SimulationView(QWidget):
                 
                 # 更新对象位置
                 old_pos = self.selected_object.position
+                # 保存原位置用于创建命令
+                if not hasattr(self, 'drag_start_position'):
+                    self.drag_start_position = old_pos
+                
+                # 取消吸附，直接使用计算出的位置
                 self.selected_object.position = (old_pos[0] + phys_dx, old_pos[1] + phys_dy)
                 
                 # 重绘视图
@@ -281,12 +327,13 @@ class SimulationView(QWidget):
         
         # 如果正在绘制矩形，绘制预览
         if self.is_drawing_rect and self.rect_start_pos and self.last_mouse_pos:
-            # 获取当前鼠标位置的物理坐标
+            # 获取当前鼠标位置的物理坐标，并应用吸附
             phys_x, phys_y = self.camera.from_screen_coords(self.last_mouse_pos.x(), self.last_mouse_pos.y())
+            end_pos = self.snap_to_grid(phys_x, phys_y)
             
             # 计算矩形的屏幕坐标
             start_x, start_y = self.camera.to_screen_coords(self.rect_start_pos[0], self.rect_start_pos[1])
-            end_x, end_y = self.camera.to_screen_coords(phys_x, phys_y)
+            end_x, end_y = self.camera.to_screen_coords(end_pos[0], end_pos[1])
             
             # 计算矩形的左上角和尺寸
             rect_x = min(start_x, end_x)
@@ -303,12 +350,13 @@ class SimulationView(QWidget):
         
         # 如果正在绘制圆形，绘制预览
         elif self.is_drawing_circle and self.circle_center and self.last_mouse_pos:
-            # 获取当前鼠标位置的物理坐标
+            # 获取当前鼠标位置的物理坐标，并应用吸附
             phys_x, phys_y = self.camera.from_screen_coords(self.last_mouse_pos.x(), self.last_mouse_pos.y())
+            end_pos = self.snap_to_grid(phys_x, phys_y)
             
             # 计算半径（物理单位）
-            dx = phys_x - self.circle_center[0]
-            dy = phys_y - self.circle_center[1]
+            dx = end_pos[0] - self.circle_center[0]
+            dy = end_pos[1] - self.circle_center[1]
             radius = math.sqrt(dx*dx + dy*dy)
             
             # 转换为屏幕坐标
@@ -485,6 +533,54 @@ class SimulationView(QWidget):
         # 重绘视图
         self.update()
     
+    def snap_to_grid(self, x, y):
+        """
+        将坐标吸附到最近的网格点
+        
+        参数:
+            x, y: 物理坐标
+            
+        返回:
+            吸附后的坐标元组 (x, y)
+        """
+        # 获取当前渲染器中使用的网格间隔
+        grid_interval = self.renderer._calculate_nice_tick_interval(
+            max(self.width() / self.scale, self.height() / self.scale),
+            target_count=10
+        )
+        
+        # 计算标准化间隔
+        exponent = math.floor(math.log10(grid_interval))
+        normalized_interval = grid_interval / (10 ** exponent)
+        
+        # 确保只吸附到整数格子
+        if normalized_interval == 5:  # 针对5的倍数间隔特殊处理
+            # 使用更大的单位间隔（10的幂次）
+            snapping_interval = 10 ** exponent
+        elif normalized_interval == 2:  # 针对2的倍数间隔特殊处理
+            # 使用2的倍数作为间隔
+            snapping_interval = 2 * (10 ** exponent)
+        else:
+            # 使用整数倍的基本间隔
+            snapping_interval = grid_interval
+        
+        # 吸附阈值（减小为网格间隔的5%，提高响应性）
+        snap_threshold = grid_interval * 0.05
+        
+        # 计算最近的整数格点
+        grid_x = round(x / snapping_interval) * snapping_interval
+        grid_y = round(y / snapping_interval) * snapping_interval
+        
+        # 计算到网格点的距离
+        dx = abs(x - grid_x)
+        dy = abs(y - grid_y)
+        
+        # 如果距离小于阈值，则吸附到网格点
+        snapped_x = grid_x if dx < snap_threshold else x
+        snapped_y = grid_y if dy < snap_threshold else y
+        
+        return (snapped_x, snapped_y)
+    
     def create_object(self, x, y):
         """
         在指定位置创建对象
@@ -495,20 +591,96 @@ class SimulationView(QWidget):
         返回:
             创建的对象
         """
-        obj = self.object_factory.create_object(self.current_object_type, x, y)
+        # 吸附坐标到网格
+        snapped_x, snapped_y = self.snap_to_grid(x, y)
+        
+        obj = self.object_factory.create_object(self.current_object_type, snapped_x, snapped_y)
         if obj:
-            self.update()  # 重绘视图
+            self.update()
         return obj
     
     def keyPressEvent(self, event):
         """处理键盘事件"""
+        # 处理撤销和重做快捷键
+        if event.matches(QKeySequence.Undo) or event.matches(QKeySequence.Redo):
+            # 将撤销/重做快捷键传递给主窗口
+            main_window = self.parent()
+            while main_window and not hasattr(main_window, 'command_history'):
+                main_window = main_window.parent()
+            
+            if main_window and hasattr(main_window, 'command_history'):
+                if event.matches(QKeySequence.Undo):
+                    main_window.undo()
+                    event.accept()
+                    return
+                elif event.matches(QKeySequence.Redo):
+                    main_window.redo()
+                    event.accept()
+                    return
+        
         # 删除选中的对象
         if event.key() == Qt.Key_Delete and self.selected_object:
-            self.simulator.remove_object(self.selected_object)
-            self.selected_object = None
-            self.update()
-        # 其他键盘操作可以在这里添加
-        
+            # 获取主窗口以执行删除命令
+            main_window = self.parent()
+            while main_window and not hasattr(main_window, 'command_history'):
+                main_window = main_window.parent()
+            
+            if main_window and hasattr(main_window, 'command_history'):
+                main_window.delete_selected()
+                event.accept()
+                return
+            else:
+                # 如果找不到主窗口，直接从模拟器中删除对象
+                self.simulator.remove_object(self.selected_object)
+                self.selected_object = None
+                self.update()
+                return
+            
+        # 当有选中物体时，处理方向键移动
+        if self.selected_object:
+            # 获取当前网格间隔（使用渲染器计算的当前可见网格大小）
+            grid_interval = self.renderer._calculate_nice_tick_interval(
+                max(self.width() / self.scale, self.height() / self.scale),
+                target_count=10
+            )
+            
+            # 当前物体位置
+            curr_pos = self.selected_object.position
+            new_pos = None
+            
+            # 根据按键移动物体，始终移动一个网格单位
+            if event.key() == Qt.Key_Left:
+                # 左移一个网格单位
+                new_pos = (curr_pos[0] - grid_interval, curr_pos[1])
+            elif event.key() == Qt.Key_Right:
+                # 右移一个网格单位
+                new_pos = (curr_pos[0] + grid_interval, curr_pos[1])
+            elif event.key() == Qt.Key_Up:
+                # 上移一个网格单位
+                new_pos = (curr_pos[0], curr_pos[1] + grid_interval)
+            elif event.key() == Qt.Key_Down:
+                # 下移一个网格单位
+                new_pos = (curr_pos[0], curr_pos[1] - grid_interval)
+            
+            # 如果位置改变，创建移动命令
+            if new_pos:
+                # 获取主窗口以执行移动命令
+                main_window = self.parent()
+                while main_window and not hasattr(main_window, 'command_history'):
+                    main_window = main_window.parent()
+                
+                if main_window and hasattr(main_window, 'command_history'):
+                    from utils.command_history import MoveObjectCommand
+                    command = MoveObjectCommand(self.selected_object, curr_pos, new_pos)
+                    main_window.command_history.execute_command(command)
+                else:
+                    # 如果找不到主窗口，直接更新位置
+                    self.selected_object.position = new_pos
+                
+                self.update()
+                event.accept()
+                return
+    
     def update_simulation(self, dt=None):
         """
         更新物理模拟

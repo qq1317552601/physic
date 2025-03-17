@@ -97,6 +97,12 @@ class ObjectContextMenu:
         fixed_action.triggered.connect(lambda checked: self.set_object_fixed(obj, checked))
         geometry_menu.addAction(fixed_action)
         
+        # 添加删除菜单项
+        context_menu.addSeparator()  # 添加分隔线
+        delete_action = QAction("删除物体", self.parent)
+        delete_action.triggered.connect(lambda: self.delete_object(obj, update_callback))
+        context_menu.addAction(delete_action)
+        
         # 显示菜单
         context_menu.exec_(pos)
     
@@ -243,4 +249,22 @@ class ObjectContextMenu:
         # 如果固定物体，则重置其速度和加速度
         if fixed:
             obj.velocity = (0, 0)
-            obj.acceleration = (0, 0) 
+            obj.acceleration = (0, 0)
+    
+    def delete_object(self, obj, update_callback=None):
+        """
+        删除物体
+        
+        参数:
+            obj: 要删除的物理对象
+            update_callback: 更新UI的回调函数
+        """
+        # 从物理模拟器中移除物体
+        if hasattr(self.parent, 'simulator'):
+            self.parent.simulator.remove_object(obj)
+            # 如果有选中的物体，且是被删除的物体，则取消选中
+            if hasattr(self.parent, 'selected_object') and self.parent.selected_object == obj:
+                self.parent.selected_object = None
+            # 更新视图
+            if update_callback:
+                update_callback() 

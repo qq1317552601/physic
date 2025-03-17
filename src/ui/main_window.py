@@ -3,13 +3,14 @@ import sys
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QToolBar, QAction, QDockWidget, QFormLayout, QLabel, QDoubleSpinBox,
                             QComboBox, QGroupBox, QSlider, QPushButton, QStatusBar, QSplitter,
-                            QCheckBox, QButtonGroup, QRadioButton)
-from PyQt5.QtGui import QIcon, QPainter, QColor, QPen, QBrush, QFont
+                            QCheckBox, QButtonGroup, QRadioButton, QShortcut)
+from PyQt5.QtGui import QIcon, QPainter, QColor, QPen, QBrush, QFont, QKeySequence
 from PyQt5.QtCore import Qt, QTimer, QRect, QPoint
 from .simulation_view import SimulationView
 from .property_panel import PropertyPanel
 from .toolbox import ToolboxPanel
 from utils.config import config
+from utils.command_history import CommandHistory, MoveObjectCommand, ChangePropertyCommand, AddObjectCommand, RemoveObjectCommand
 
 class MainWindow(QMainWindow):
     """
@@ -21,6 +22,12 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("物理运动学可视化软件")
         self.resize(1200, 800)
+        
+        # 确保窗口能捕获所有按键事件
+        self.setFocusPolicy(Qt.StrongFocus)
+        
+        # 创建命令历史管理器
+        self.command_history = CommandHistory()
         
         # 创建中央组件
         self.central_widget = QWidget()
@@ -69,11 +76,70 @@ class MainWindow(QMainWindow):
         self.fps_timer = 0
         self.current_fps = 0
         
+        # 设置快捷键
+        self.setup_shortcuts()
+        
         # 连接信号
         self.connect_signals()
         
         # 加载配置
         self.load_config()
+        
+        # 显示初始提示信息
+        self.statusBar.showMessage("程序已启动. 使用Ctrl+Z撤销，Ctrl+Y重做", 5000)
+    
+    def setup_shortcuts(self):
+        """设置快捷键"""
+        # 删除快捷键 (Delete)
+        self.delete_shortcut = QShortcut(QKeySequence.Delete, self)
+        self.delete_shortcut.activated.connect(self.delete_selected)
+        
+        # 注意：撤销和重做快捷键已在工具栏动作中设置
+    
+    def keyPressEvent(self, event):
+        """处理键盘事件，确保快捷键正常工作"""
+        # 处理撤销快捷键 (Ctrl+Z)
+        if event.matches(QKeySequence.Undo):
+            self.undo()
+            event.accept()
+            return
+        
+        # 处理重做快捷键 (Ctrl+Y 或 Ctrl+Shift+Z)
+        if event.matches(QKeySequence.Redo):
+            self.redo()
+            event.accept()
+            return
+        
+        # 继续传递事件给基类
+        super().keyPressEvent(event)
+    
+    def undo(self):
+        """撤销上一个操作"""
+        if self.command_history.undo():
+            self.simulation_view.update()
+            # 更新状态栏
+            self.statusBar.showMessage("已撤销操作", 2000)
+    
+    def redo(self):
+        """重做下一个操作"""
+        if self.command_history.redo():
+            self.simulation_view.update()
+            # 更新状态栏
+            self.statusBar.showMessage("已重做操作", 2000)
+    
+    def delete_selected(self):
+        """删除选中的物体"""
+        if self.simulation_view.selected_object:
+            obj = self.simulation_view.selected_object
+            # 创建删除命令
+            command = RemoveObjectCommand(self.simulation_view.simulator, obj)
+            self.command_history.execute_command(command)
+            # 清除选中状态
+            self.simulation_view.selected_object = None
+            self.property_panel.update_for_selected_object(None)
+            self.simulation_view.update()
+            # 更新状态栏
+            self.statusBar.showMessage("已删除物体", 2000)
     
     def create_toolbar(self):
         """创建工具栏"""
@@ -95,6 +161,19 @@ class MainWindow(QMainWindow):
         
         toolbar.addSeparator()
         
+        # 添加撤销/重做按钮
+        self.undo_action = QAction("撤销", self)
+        self.undo_action.triggered.connect(self.undo)
+        self.undo_action.setShortcut(QKeySequence.Undo)
+        toolbar.addAction(self.undo_action)
+        
+        self.redo_action = QAction("重做", self)
+        self.redo_action.triggered.connect(self.redo)
+        self.redo_action.setShortcut(QKeySequence.Redo)
+        toolbar.addAction(self.redo_action)
+        
+        toolbar.addSeparator()
+        
         about_action = QAction("关于", self)
         about_action.triggered.connect(self.show_about)
         toolbar.addAction(about_action)
@@ -104,10 +183,7 @@ class MainWindow(QMainWindow):
         # 连接模拟视图信号
         self.simulation_view.mousePositionChanged.connect(self.update_mouse_position)
         self.simulation_view.scaleChanged.connect(self.update_scale_info)
-        
-        # 连接属性面板信号
-        self.property_panel.objectTypeChanged.connect(self.update_object_type)
-        self.property_panel.objectCreated.connect(self.create_object)
+        self.simulation_view.objectSelected.connect(self.update_property_panel)
         
         # 连接工具箱面板信号
         self.toolbox_panel.objectTypeSelected.connect(self.set_object_type)
@@ -172,56 +248,9 @@ class MainWindow(QMainWindow):
         """
         self.scale_label.setText(f"比例: {scale:.1f} 像素/{unit}")
     
-    def create_object(self, props):
-        """
-        创建物理对象
-        
-        参数:
-            props: 对象属性字典
-        """
-        obj_type = props["type"]
-        position = props["position"]
-        mass = props["mass"]
-        velocity = props["velocity"]
-        color = props["color"]
-        
-        if obj_type == "长方体":
-            width = props["width"]
-            height = props["height"]
-            self.simulation_view.add_box(position, width, height, mass, velocity, color)
-        elif obj_type == "圆形":
-            radius = props["radius"]
-            self.simulation_view.add_circle(position, radius, mass, velocity, color)
-        elif obj_type == "三角形":
-            width = props["width"]
-            height = props["height"]
-            self.simulation_view.add_triangle(position, (width, height), mass, velocity, color)
-        elif obj_type == "弹簧":
-            k = props["k"]
-            end_pos = props["end_pos"]
-            self.simulation_view.add_spring(position, end_pos, k, 0.1, color)
-        elif obj_type == "轻绳":
-            segments = props["segments"]
-            end_pos = props["end_pos"]
-            self.simulation_view.add_rope(position, end_pos, segments, 0.05, color)
-        elif obj_type == "斜面":
-            width = props["width"]
-            height = props["height"]
-            friction = props["friction"]
-            self.simulation_view.add_ramp(position, width, height, friction, color)
-    
     def clear_objects(self):
         """清除所有物理对象"""
         self.simulation_view.clear_objects()
-    
-    def update_object_type(self, type_name):
-        """
-        更新对象类型
-        
-        参数:
-            type_name: 对象类型名称
-        """
-        self.simulation_view.set_object_type(type_name)
     
     def toggle_draw_mode(self, state):
         """
@@ -285,7 +314,6 @@ class MainWindow(QMainWindow):
         参数:
             type_name: 对象类型名称
         """
-        self.property_panel.type_combo.setCurrentText(type_name)
         self.simulation_view.set_object_type(type_name)
     
     def set_time_scale(self, scale):
@@ -342,6 +370,15 @@ class MainWindow(QMainWindow):
         
         # 更新配置
         config.set("physics", "gravity", [gx, gy])
+    
+    def update_property_panel(self, obj):
+        """
+        更新属性面板以显示选中物体的属性
+        
+        参数:
+            obj: 选中的物理对象
+        """
+        self.property_panel.update_for_selected_object(obj)
 
 
 if __name__ == "__main__":
